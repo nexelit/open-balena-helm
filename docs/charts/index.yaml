@@ -3,7 +3,28 @@ entries:
   openbalena:
   - apiVersion: v2
     appVersion: v3.8.2
-    created: "2023-04-21T11:47:38.386774+02:00"
+    created: "2023-04-21T12:58:27.672038+02:00"
+    dependencies:
+    - alias: haproxy
+      name: haproxy-ingress
+      repository: https://haproxy-ingress.github.io/charts
+      version: 0.14.2
+    description: openBalena kubernetes Chart
+    digest: c3c37355c87c6c90a249cfd11f8d941382e0096705a4ede32ccb634734c3cb31
+    keywords:
+    - balena
+    - openbalena
+    maintainers:
+    - email: b.versluijs@nexelit.io
+      name: bartversluijs
+    name: openbalena
+    type: application
+    urls:
+    - https://open-balena.helm.nexelit.io/charts/openbalena-1.3.4.tgz
+    version: 1.3.4
+  - apiVersion: v2
+    appVersion: v3.8.2
+    created: "2023-04-21T12:58:27.669814+02:00"
     dependencies:
     - alias: haproxy
       name: haproxy-ingress
@@ -22,4 +43,4 @@ entries:
     urls:
     - https://open-balena.helm.nexelit.io/charts/openbalena-1.3.3.tgz
     version: 1.3.3
-generated: "2023-04-21T11:47:38.384615+02:00"
+generated: "2023-04-21T12:58:27.666752+02:00"
