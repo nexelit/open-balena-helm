@@ -63,7 +63,7 @@ spec:
         - name: COOKIE_SESSION_SECRET
           value: "{{ index .Values "global" "keys" "cookie-secret" }}"
         - name: DB_HOST
-          value: "openbalena-db"
+          value: "{{ include "openbalena.fullname" . }}-db"
         - name: DB_PASSWORD
           value: "docker"
         - name: DB_PORT
