@@ -18,7 +18,7 @@ metadata:
     {{- with .Values.ingress.http.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- if eq .Values.ingress.annotations.ingressClassName "traefik" }}
+    {{- if eq .Values.ingress.ingressClassName "traefik" }}
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     {{- end }}
 spec:

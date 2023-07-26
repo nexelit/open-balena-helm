@@ -1,2 +1,6 @@
 open-balena/charts
 open-balena/Chart.lock
+install.log
+ca.crt
+qemux*
+*.code-workspace
