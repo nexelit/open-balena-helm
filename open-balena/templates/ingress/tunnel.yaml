@@ -1,3 +1,4 @@
+{{- if eq .Values.ingress.ingressClassName "openbalena-haproxy" }}
 {{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/Ingress" }}
 apiVersion: networking.k8s.io/v1
 {{- else if .Capabilities.APIVersions.Has "networking.k8s.io/v1beta1/Ingress" }}
@@ -20,6 +21,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
   tls:
   - hosts:
     - tunnel.{{ .Values.global.hostname }}
@@ -35,3 +37,30 @@ spec:
             name: {{ include "openbalena.fullname" . }}-internal-tunnel
             port:
               number: 3128
+
+{{- else if eq .Values.ingress.ingressClassName "traefik" }}
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ include "openbalena.fullname" . }}-tunnel
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openbalena.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.http.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: HostSNI(`tunnel.{{ .Values.global.hostname }}`)
+    services:
+    - name: {{ include "openbalena.fullname" . }}-vpn
+      port: 3128
+  tls:
+    passthrough: true
+{{- end }}

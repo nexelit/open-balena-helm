@@ -1,3 +1,4 @@
+{{- if eq .Values.ingress.ingressClassName "openbalena-haproxy" }}
 {{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/Ingress" }}
 apiVersion: networking.k8s.io/v1
 {{- else if .Capabilities.APIVersions.Has "networking.k8s.io/v1beta1/Ingress" }}
@@ -22,6 +23,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
   rules:
   - host: vpn.{{ .Values.global.hostname }}
     http:
@@ -33,3 +35,18 @@ spec:
             name: {{ include "openbalena.fullname" . }}-vpn
             port:
               number: 443
+{{- else if eq .Values.ingress.ingressClassName "traefik" }}
+# There is no TLS enabled here since the openvpn handles it itself
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ include "openbalena.fullname" . }}-vpn
+spec:
+  entryPoints:                  
+    - websecure
+  routes:                       
+  - match: HostSNI(`*`)
+    services:                   
+    - name: {{ include "openbalena.fullname" . }}-vpn                 
+      port: 443
+{{- end }}

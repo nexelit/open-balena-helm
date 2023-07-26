@@ -1,0 +1,36 @@
+---
+# Create an issuer that will provide a CA
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+# Create a CA certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: my-selfsigned-ca
+  namespace: default
+spec:
+  isCA: true
+  commonName: my-selfsigned-ca
+  secretName: root-secret
+  privateKey:
+    algorithm: Ed25519
+    size: 256
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+# Use the CA certificate for the actual certificate issuer
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: ca-issuer
+  namespace: default
+spec:
+  ca:
+    secretName: root-secret

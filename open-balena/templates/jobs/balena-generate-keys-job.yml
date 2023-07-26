@@ -1,0 +1,186 @@
+---
+# Contains the random based secrets as `stringData` to ensure kubernetes does not decode them when getting them from the secret
+# open-balena base64 decodes the secret before using it. Therefore we need to double64 encode the secret.
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "{{ include "openbalena.fullname" . }}-open-balena-secrets"
+type: Opaque
+stringData:
+  cookie-secret: '{{- index .Values "global" "keys" "cookie-secret"                      | default (randAlphaNum 32 | quote | b64enc)  }}'
+  jwt-secret: '{{- index .Values "global" "keys" "jwt-secret"                            | default (randAlphaNum 32 | quote | b64enc) }}'
+  registry-code: '{{- index .Values "global" "keys" "registry-code"                      | default (randAlphaNum 32 | quote | b64enc) }}' 
+  service-api-key: '{{- index .Values "global" "keys" "service-api-key"                  | default (randAlphaNum 32 | quote | b64enc) }}'
+  api-vpn-service-api-key: '{{- index .Values "global" "keys" "api-vpn-service-api-key"  | default (randAlphaNum 32 | quote | b64enc) }}'
+  registry-secret-key: '{{- index .Values "global" "keys" "registry-secret-key"          | default (randAlphaNum 32 | quote | b64enc)  }}'
+
+---
+
+# Contains the random based secrets for the s3 provider as `stringData` to ensure kubernetes does not decode them when getting them from the secret
+# open-balena base64 decodes the secret before using it. Therefore we need to double64 encode the secret.
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "{{ include "openbalena.fullname" . }}-s3-secrets"
+type: Opaque
+stringData:
+  accesskey: '{{- index .Values "global" "keys" "accesskey"  | default (randAlphaNum 32 | quote | b64enc) }}'
+  secretkey: '{{- index .Values "global" "keys" "secretkey"  | default (randAlphaNum 32 | quote | b64enc) }}'
+  bucket: '{{- index .Values "global" "keys" "bucket"        | default "registry-data" }}'
+
+
+---
+
+
+# Create a service account that allows our DH params generator to create secrets. 
+# Then create a job that will generate the DH params and create the secret if it doesn't already exist.
+
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "{{ include "openbalena.fullname" . -}}-generate-token-auth"
+  namespace: {{ .Release.Namespace }}
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openbalena.fullname" . }}-secret-creator-token-auth
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "list", "update"]
+
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openbalena.fullname" . }}-secret-creator-binding-token-auth
+subjects:
+- kind: ServiceAccount
+  name: "{{- include "openbalena.fullname" . -}}-generate-token-auth"
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "openbalena.fullname" . }}-secret-creator-token-auth
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+
+# The `...-api-job-generate-token-auth` job requires access to the `_keyid.js` script.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "openbalena.fullname" . }}-generate-token-auth-keyid-js"
+data:
+{{ (.Files.Glob "_keyid.js").AsConfig | indent 2 }}
+
+
+---
+# We create a job that will generate the `token-auth-...` values if they are not specified in the `kubernetes.yaml` file. 
+# The API container internally base64 decodes the secret. In addition, the `secretKeyRef` also base64 decodes the secret.
+# Since we do not want to maintain an API container that does not base64 decodes the image we create second secret that is double64 encoded.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{- include "openbalena.fullname" . -}}-api-job-generate-token-auth"
+  namespace: {{ .Release.Namespace }}
+spec:
+  template:
+    spec:
+      serviceAccountName: "{{ include "openbalena.fullname" . }}-generate-token-auth"
+      restartPolicy: OnFailure
+      containers:
+      - name: generate-token-auth
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs/linux-x86_64:latest
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+          CRT_EXPIRY_DAYS=730
+          CERT_FILE={{- printf "api.%s" .Values.global.hostname }}
+          JWT_CRT="${CERT_FILE}.crt"
+          JWT_KEY="${CERT_FILE}.pem"
+          JWT_KID="${CERT_FILE}.kid"
+          echo "Generating token auth secrets"
+          echo $CERT_FILE
+          echo $JWT_CRT
+          echo $JWT_KEY
+          echo $JWT_KID
+          if [ ! -f "$TOKEN_AUTH_BUILDER_TOKEN" ] || [ ! -f "$TOKEN_AUTH_CERT_PUB" ] || [ ! -f "$TOKEN_AUTH_CERT_KEY" ] || [ ! -f "$TOKEN_AUTH_CERT_KID" ]; then
+          echo "Creating token auth secrets"
+          TOKEN_AUTH_BUILDER_TOKEN=$(openssl rand -hex 64)
+          echo "creating token auth keypair"
+          openssl ecparam -name prime256v1 -genkey -noout -out "${JWT_KEY}"
+          echo "creating req"
+          ls -alh
+          openssl req -x509 -new -nodes -days "${CRT_EXPIRY_DAYS}" -key "${JWT_KEY}" -subj {{ printf " /CN=api.%s " .Values.global.hostname }} -out "${JWT_CRT}"
+          echo "creating ec"
+          openssl ec -in "${JWT_KEY}" -pubout -outform DER -out "${CERT_FILE}.der"
+          echo "some keyid thing"
+          node --no-deprecation "/scripts/_keyid.js" "${CERT_FILE}.der" >"${JWT_KID}"
+          rm "${CERT_FILE}.der"
+          echo "Finished creating tokens"
+          echo  'apiVersion: v1
+          kind: Secret
+          metadata:
+            name: {{ include "openbalena.fullname" . }}-token-auth
+          stringData:
+            token-auth-builder-token: '"$TOKEN_AUTH_BUILDER_TOKEN"'
+            token-auth-pub: '"$(cat $JWT_CRT | base64 | tr -d '\n')"'
+            token-auth-key: '"$(cat $JWT_KEY | base64 | tr -d '\n')"'
+            token-auth-kid: '"$(cat $JWT_KID | base64 | tr -d '\n')" > request.yml
+          cat request.yml
+          curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -X POST -H "Content-Type: application/yaml" -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" --data-binary "$(cat request.yml)" "https://kubernetes.default.svc/api/v1/namespaces/$NAMESPACE/secrets"
+          else 
+          echo "Secrets already exist, skipping generation"
+          fi
+          exit
+        env:
+        - name: TOKEN_AUTH_BUILDER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-builder-token"
+              optional: true
+        - name: TOKEN_AUTH_CERT_PUB
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-pub"
+              optional: true
+        - name: TOKEN_AUTH_CERT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-key"
+              optional: true
+        - name: TOKEN_AUTH_CERT_KID
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-kid"
+              optional: true
+        volumeMounts:
+        - name: keyid-volume
+          mountPath: /scripts
+        resources:
+          limits:
+            cpu: "2"
+            memory: "1Gi"
+          requests:
+            cpu: "1"
+      volumes:
+      - name: "keyid-volume"
+        configMap:
+          name: "{{ include "openbalena.fullname" . }}-generate-token-auth-keyid-js"
+

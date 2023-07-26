@@ -1,0 +1,11 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    additionalArguments:
+      - "--log.level=TRACE"
+      - "--accesslog=true"
+      - "--entryPoints.tunnel.address=:3128/tcp"

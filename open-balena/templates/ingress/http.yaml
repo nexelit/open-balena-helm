@@ -18,7 +18,11 @@ metadata:
     {{- with .Values.ingress.http.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- if eq .Values.ingress.annotations.ingressClassName "traefik" }}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    {{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
   tls:
   - hosts:
     - {{ .Values.global.hostname }}
@@ -28,7 +32,7 @@ spec:
     {{- if .Values.s3.enabled }}
     - s3.{{ .Values.global.hostname }}
     {{- end }}
-    secretName: {{ include "openbalena.fullname" . }}-tls
+    secretName: {{ include "openbalena.fullname" . }}-api-cert
   rules:
   - host: api.{{ .Values.global.hostname }}
     http:

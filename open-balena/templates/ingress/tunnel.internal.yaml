@@ -1,3 +1,4 @@
+{{- if eq .Values.ingress.ingressClassName "openbalena-haproxy" }}
 {{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/Ingress" }}
 apiVersion: networking.k8s.io/v1
 {{- else if .Capabilities.APIVersions.Has "networking.k8s.io/v1beta1/Ingress" }}
@@ -20,6 +21,8 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
+  # todo: Not convinced we actually need the tls statement here. Cant find a ref in the docs of haproxy: https://haproxy-ingress.github.io/docs/configuration/keys/#tcp-services
   tls:
   - secretName: {{ include "openbalena.fullname" . }}-tunnel-tls
   rules:
@@ -32,3 +35,17 @@ spec:
             name: {{ include "openbalena.fullname" . }}-vpn
             port:
               number: 3128
+{{- else if eq .Values.ingress.ingressClassName "traefik" }}
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ include "openbalena.fullname" . }}-internal-tunnel
+spec:
+  entryPoints:                  
+    - tunnel
+  routes:                       
+  - match: HostSNI(`*`)        
+    services:                   
+    - name: {{ include "openbalena.fullname" . }}-vpn
+      port: 3128
+{{- end }}

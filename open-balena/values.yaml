@@ -87,8 +87,8 @@ global:
 
 ingress:
   # Global ingress settings
-  annotations:
-    kubernetes.io/ingress.class: openbalena-haproxy
+  ingressClassName: openbalena-haproxy
+  annotations: {}
 
   # HTTP ingress settings
   http:

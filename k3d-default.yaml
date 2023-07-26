@@ -1,0 +1,18 @@
+---
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: k3s-default
+servers: 1
+agents: 0
+image: docker.io/rancher/k3s:v1.27.2-k3s1
+ports:
+  - port: 80:80 # same as `--port '80:80@loadbalancer'`
+    nodeFilters:
+      - loadbalancer
+  - port: 443:443 # same as `--port '443:443@loadbalancer'`
+    nodeFilters:
+      - loadbalancer
+  - port: 3128:3128 
+    nodeFilters:
+      - loadbalancer

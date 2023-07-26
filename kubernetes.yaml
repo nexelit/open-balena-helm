@@ -1,0 +1,70 @@
+# Default values for chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# General configuration
+global:
+  # Hostname of openBalena instance
+  hostname: "192.168.99.107.nip.io"
+
+  # openBalena admin details
+  email: "admin@balena.open"
+  password: "test123"
+
+  # Production mode for openBalena (will cause containers to restart when crashed)
+  production-mode: false
+
+  # Authorized SSH keys
+  sshAuthorizedKeys: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH2ZKeSF9kqin9oVyK0cKF+jnYccw1OxXA5OvNGwj7Be raphael.duerscheid@aivero.com"
+
+  # S3 settings
+  # If using other settings than the default settings, you can disable the S3 StatefulSet by setting '.s3.enabled' to false
+  s3:
+    bucket: 
+    endpoint: "https://s3.192.168.99.107.nip.io"
+    region: "us-east-1"
+    accesskey: 
+    secretkey: 
+
+  # Keys
+  keys:
+    cookie-secret: 
+    jwt-secret: 
+    # fixme: Does not seem used
+    registry-code: 
+    service-api-key: 
+    api-vpn-service-api-key: 
+    registry-secret-key: 
+    # Until here they are all in the `...-open-balena-secrets`
+    # From here they are produced by job `...-generate-token-auth`
+    # Check `balena-generate-keys-job.yml` for both
+    token-auth-builder-token: 
+    token-auth-pub: 
+    token-auth-key: 
+    token-auth-kid: 
+
+  # Certificates
+  certificates:
+    # If specified, we will use this certificate for the TLS endpoint. There are two options: Using the secretname or having cert-manager generate one for use. See the `api.yaml` file for that.
+    root:
+      ca:
+      crt:
+      key:
+
+    vpn:
+      ca:
+      ca-chain:
+      crt:
+      server-key:
+
+# To add a cert-manager issuer, use the ingress.annotations
+# It will update all ingress' annotations
+# Example of adding the annotation:
+# ingress:
+# annotations:
+# cert-manager.io/issuer: <issuer>
+ingress:
+  ingressClassName: traefik
+  annotations:
+    cert-manager.io/issuer: ca-issuer
+
