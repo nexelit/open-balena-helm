@@ -81,7 +81,7 @@ spec:
       serviceAccountName: {{ include "openbalena.fullname" . }}-read-update-secrets
       initContainers:
       - name: republish-secrets-as-double-secrets
-        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs/linux-x86_64:latest
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs-inotifytools/linux-x86_64:latest
         env:
         {{- if not (index .Values "global" "certificates" "root" "ca") }}
         - name: VPN_CERTIFICATE_CA

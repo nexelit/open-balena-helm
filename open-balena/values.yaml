@@ -122,6 +122,19 @@ api:
     externalIPs: []
 
   sentry-dsn: ""
+  # Specifies an additional **Github** repository to clone contracts from.
+  # This is useful if you want to use a private repository for your contracts.
+  # Alternatively, you can specify the `mountInsteadOfClone` 
+  # option to mount a github .zip files instead of cloning a repository.
+  contractsPrivateRepo:
+    owner: ""
+    name: ""
+    token: ""
+    # If no owner, name or token is provided, but mountInsteadOfClone exists, 
+    # we will place the contracts in the /tmp/contracts/private-contracts folder
+    mountInsteadOfClone:
+      image: "registry.gitlab.com/aivero/open-source/contrib/alpine-curl-balena-io-contracts/linux-x86_64:3.15-master"
+      zipPath: "/contracts/balena-io-contracts-master.zip"
 
 # openBalena VPN
 vpn:

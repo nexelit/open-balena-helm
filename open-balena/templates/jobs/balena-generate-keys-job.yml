@@ -99,7 +99,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: generate-token-auth
-        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs/linux-x86_64:latest
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs-inotifytools/linux-x86_64:latest
         command:
         - sh
         - -c

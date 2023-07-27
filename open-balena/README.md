@@ -207,3 +207,18 @@ Inspired by https://docs.balena.io/learn/getting-started/qemux86-64/python/ we c
 7. terminate the qemu: `shutdown now`
 
 After the qemu has started you can check on the host machine if it has connected correctly: `balena devices`
+
+----
+
+# Air-gapped setup (WIP)
+
+## Building an air-gapped installable package
+
+For a fully air-gapped setup we need to:
+- Ensure all container images are available locally
+- Ensure all helm charts are available locally
+- Ensure our cluster has access to the local images
+- Deploy balena fleets using local images
+
+## Starting the system in an air-gapped setup
+

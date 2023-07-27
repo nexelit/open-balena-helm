@@ -1,3 +1,8 @@
+{{- $contractsPrivateRepoOwner := default "private" (index .Values "api" "contractsPrivateRepo" "owner") }}
+{{- $contractsPrivateRepoName := default "contracts" (index .Values "api" "contractsPrivateRepo" "name") }}
+{{- $contractsPrivateRepoToken := default "non-empty-string" (index .Values "api" "contractsPrivateRepo" "token") }}
+{{- $contractsFolderInApi := printf "%s-%s" $contractsPrivateRepoOwner $contractsPrivateRepoName }}
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,9 +51,8 @@ spec:
       # The openbalena API container reads the cert-manager generated root CA from an env and base64 decodes it.
       # Refer to `ingress/http.yaml` for the name of the secret.
       # k8s secrets are base64 decoded by default, so we need to double encode the root CA certificate before placing it in the secret.
-      # todo: Test if this  container, that already includes openssl, curl and jq, works.
       - name: republish-secrets-as-double-secrets
-        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs/linux-x86_64:latest
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs-inotifytools/linux-x86_64:latest
         env:
         - name: ROOT_CA
           valueFrom: 
@@ -71,6 +75,22 @@ spec:
               ca.crt: '"$ROOT_CA_DOUBLE64" > request.yml
             curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -X POST -H "Content-Type: application/yaml" -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" --data-binary "$(cat request.yml)" "https://kubernetes.default.svc/api/v1/namespaces/$NAMESPACE/secrets"
             exit
+      {{- end }}
+      {{- if .Values.api.contractsPrivateRepo.mountInsteadOfClone }}
+      # This container is used to extract the contracts private repo from a container and mount it as a volume into the api container.
+      - name: mount-private-contracts-repo
+        image: {{ .Values.api.contractsPrivateRepo.mountInsteadOfClone.image }}
+        command: 
+          - sh
+          - -c
+          - |
+            set -e
+            mkdir -p /tmp/temporary-contracts-folder
+            unzip -o {{ index .Values "api" "contractsPrivateRepo" "mountInsteadOfClone" "zipPath" }} -d /tmp/temporary-contracts-folder
+            mv /tmp/temporary-contracts-folder/*/* /contracts-folder/
+        volumeMounts:
+        - mountPath: "/contracts-folder"
+          name: private-contracts-repo
       {{- end }}
       containers:
       - name: {{ .Chart.Name }}-api
@@ -202,11 +222,29 @@ spec:
           value: "{{ index .Values "global" "email" }}"
         - name: SUPERUSER_PASSWORD
           value: "{{ index .Values "global" "password" }}"
+        {{- if (index .Values "api" "contractsPrivateRepo" "mountInsteadOfClone" ) }}
+        - name: CONTRACTS_PRIVATE_REPO_OWNER
+          value: "{{ $contractsPrivateRepoOwner }}"
+        - name: CONTRACTS_PRIVATE_REPO_NAME
+          value: "{{ $contractsPrivateRepoName }}"
+        - name: CONTRACTS_PRIVATE_REPO_TOKEN
+          value: "{{ $contractsPrivateRepoToken }}"
+        {{- else }}
+        - name: CONTRACTS_PRIVATE_REPO_OWNER
+          value: "{{ index .Values "api" "contractsPrivateRepo" "owner" }}"
+        - name: CONTRACTS_PRIVATE_REPO_NAME
+          value: "{{ index .Values "api" "contractsPrivateRepo" "name" }}"
+        - name: CONTRACTS_PRIVATE_REPO_TOKEN
+          value: "{{ index .Values "api" "contractsPrivateRepo" "token" }}"
+        {{- end }}
         volumeMounts:
         - mountPath: /run
           name: run
         - mountPath: /sys/fs/cgroup
           name: cgroup
+        # Mount the contracts private repo as a volume using the `owner-name` specified by the values file.
+        - mountPath: "/tmp/contracts/{{- $contractsFolderInApi }}"
+          name: private-contracts-repo
       volumes:
       - name: run
         emptyDir:
@@ -214,7 +252,9 @@ spec:
       - name: cgroup
         emptyDir:
           medium: Memory
-
+      - name: private-contracts-repo
+        emptyDir:
+          medium: Memory
       {{- with .Values.api.nodeSelector  }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
