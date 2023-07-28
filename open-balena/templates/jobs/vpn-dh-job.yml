@@ -1,0 +1,106 @@
+# Create a service account that allows our DH params generator to create secrets. 
+# Then create a job that will generate the DH params and create the secret if it doesn't already exist.
+
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openbalena.fullname" . }}-generate-dhparams
+  namespace: {{ .Release.Namespace }}
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openbalena.fullname" . }}-secret-creator
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "list", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openbalena.fullname" . }}-secret-creator-binding
+subjects:
+- kind: ServiceAccount
+  name: {{ include "openbalena.fullname" . }}-generate-dhparams
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "openbalena.fullname" . }}-secret-creator
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# We create a job that will generate the DH params and create the secret if it doesn't already exist.
+# The API container internally base64 decodes the secret. In addition, the `secretKeyRef` also base64 decodes the secret.
+# Since we do not want to maintain an API container that does not base64 decodes the image we create second secret that is double64 encoded.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "openbalena.fullname" . }}-vpn-job-generate-dhparams
+  namespace: {{ .Release.Namespace }}
+spec:
+  template:
+    spec:
+      serviceAccountName: {{ include "openbalena.fullname" . }}-generate-dhparams
+      restartPolicy: OnFailure
+      containers:
+      - name: generate-dhparams
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs-inotifytools/linux-x86_64:latest
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+          if [ -z "$VPN_OPENVPN_SERVER_DH" ]; then
+          echo "Secret does not exist, creating"
+          openssl dhparam -out dhparam.pem 2048
+          DATA=$(cat dhparam.pem | base64 | tr -d '\n')
+          echo  'apiVersion: v1
+          kind: Secret
+          metadata:
+            name: {{ include "openbalena.fullname" . }}-dh-params
+          data:
+            dhparam.pem: '"$DATA" > request.yml
+          curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -X POST -H "Content-Type: application/yaml" -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" --data-binary "$(cat request.yml)" "https://kubernetes.default.svc/api/v1/namespaces/$NAMESPACE/secrets"
+          else
+          echo "Secret already exists, reusing it"
+          echo "$VPN_OPENVPN_SERVER_DH" > dhparam.pem
+          fi
+          if [ -z "$VPN_OPENVPN_SERVER_DH_DOUBLE64" ]; then
+          echo "Double64 encoded secret does not exist, creating"
+          DATA=$(cat dhparam.pem | base64 | tr -d '\n' | base64 | tr -d '\n')
+          echo  'apiVersion: v1
+          kind: Secret
+          metadata:
+            name: {{ include "openbalena.fullname" . }}-dh-params-double64
+          data:
+            dhparam.pem: '"$DATA" > request.yml
+          curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -X POST -H "Content-Type: application/yaml" -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" --data-binary "$(cat request.yml)" "https://kubernetes.default.svc/api/v1/namespaces/$NAMESPACE/secrets"
+          else
+          echo "Double64 encoded secret already exists. Nothing to be done."
+          fi
+          exit
+        env:
+        - name: VPN_OPENVPN_SERVER_DH
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-dh-params"
+              key: "dhparam.pem"
+              optional: true
+        - name: VPN_OPENVPN_SERVER_DH_DOUBLE64
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-dh-params-double64"
+              key: "dhparam.pem"
+              optional: true
+        resources:
+          limits:
+            cpu: "2"
+            memory: "1Gi"
+          requests:
+            cpu: "1" 

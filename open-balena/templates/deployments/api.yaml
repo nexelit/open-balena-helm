@@ -1,3 +1,8 @@
+{{- $contractsPrivateRepoOwner := default "private" (index .Values "api" "contractsPrivateRepo" "owner") }}
+{{- $contractsPrivateRepoName := default "contracts" (index .Values "api" "contractsPrivateRepo" "name") }}
+{{- $contractsPrivateRepoToken := default "non-empty-string" (index .Values "api" "contractsPrivateRepo" "token") }}
+{{- $contractsFolderInApi := printf "%s-%s" $contractsPrivateRepoOwner $contractsPrivateRepoName }}
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,6 +43,55 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      # This service account is used to read and update secrets to power the double encoding of secrets as described below.
+      serviceAccountName: {{ include "openbalena.fullname" . }}-read-update-secrets
+      {{- if not (index .Values "global" "certificates" "root" "ca") }}
+      initContainers:
+      # This container is used to double encode the root CA certificate:
+      # The openbalena API container reads the cert-manager generated root CA from an env and base64 decodes it.
+      # Refer to `ingress/http.yaml` for the name of the secret.
+      # k8s secrets are base64 decoded by default, so we need to double encode the root CA certificate before placing it in the secret.
+      - name: republish-secrets-as-double-secrets
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs-inotifytools/linux-x86_64:latest
+        env:
+        - name: ROOT_CA
+          valueFrom: 
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-api-cert
+              key: "ca.crt"
+        command:
+          - sh
+          - -c
+          - |
+            set -e
+            echo "Double encoding ROOT_CA"
+            NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+            ROOT_CA_DOUBLE64=$(printf "%s" "$ROOT_CA" | base64  | tr -d '\n' | base64 | tr -d '\n')
+            echo  'apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ include "openbalena.fullname" . }}-api-cert-double64
+            data:
+              ca.crt: '"$ROOT_CA_DOUBLE64" > request.yml
+            curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -X POST -H "Content-Type: application/yaml" -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" --data-binary "$(cat request.yml)" "https://kubernetes.default.svc/api/v1/namespaces/$NAMESPACE/secrets"
+            exit
+      {{- end }}
+      {{- if .Values.api.contractsPrivateRepo.mountInsteadOfClone }}
+      # This container is used to extract the contracts private repo from a container and mount it as a volume into the api container.
+      - name: mount-private-contracts-repo
+        image: {{ .Values.api.contractsPrivateRepo.mountInsteadOfClone.image }}
+        command: 
+          - sh
+          - -c
+          - |
+            set -e
+            mkdir -p /tmp/temporary-contracts-folder
+            unzip -o {{ index .Values "api" "contractsPrivateRepo" "mountInsteadOfClone" "zipPath" }} -d /tmp/temporary-contracts-folder
+            mv /tmp/temporary-contracts-folder/*/* /contracts-folder/
+        volumeMounts:
+        - mountPath: "/contracts-folder"
+          name: private-contracts-repo
+      {{- end }}
       containers:
       - name: {{ .Chart.Name }}-api
         image: {{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}
@@ -56,14 +110,26 @@ spec:
         env:
         - name: CONFD_BACKEND
           value: "ENV"
+          # These API key, ROOTCA and Cookie session secret are generated 
+          # by the `balena-generate-keys-job.yml` job.
         - name: API_VPN_SERVICE_API_KEY
-          value: "{{ index .Values "global" "keys" "api-vpn-service-api-key" }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-open-balena-secrets
+              key: "api-vpn-service-api-key"
         - name: ROOT_CA
-          value: "{{ index .Values "global" "certificates" "root" "ca" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-api-cert-double64"
+              key: "ca.crt"
         - name: COOKIE_SESSION_SECRET
-          value: "{{ index .Values "global" "keys" "cookie-secret" }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-open-balena-secrets
+              key: "cookie-secret"
         - name: DB_HOST
           value: "{{ include "openbalena.fullname" . }}-db"
+        #fixme: this should be a secret
         - name: DB_PASSWORD
           value: "docker"
         - name: DB_PORT
@@ -72,8 +138,16 @@ spec:
           value: "docker"
         - name: DELTA_HOST
           value: "delta.{{ .Values.global.hostname }}"
+       {{- if (index .Values "global" "certificates" "vpn" "ca-chain") }}
         - name: DEVICE_CONFIG_OPENVPN_CA
           value: "{{ index .Values "global" "certificates" "vpn" "ca-chain" }}"
+       {{- else }}
+        - name: DEVICE_CONFIG_OPENVPN_CA
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-vpn-cert-double64"
+              key: "ca.crt"
+        {{- end }}  
         - name: DEVICE_CONFIG_SSH_AUTHORIZED_KEYS
           value: "{{ index .Values "global" "ssh-authorized-keys" }}"
         - name: HOST
@@ -89,7 +163,10 @@ spec:
         - name: JSON_WEB_TOKEN_EXPIRY_MINUTES
           value: "10080"
         - name: JSON_WEB_TOKEN_SECRET
-          value: "{{ index .Values "global" "keys" "jwt-secret" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-open-balena-secrets"
+              key: "jwt-secret"
         - name: MIXPANEL_TOKEN
           value: "__unused__"
         - name: PRODUCTION_MODE
@@ -109,15 +186,27 @@ spec:
         - name: SENTRY_DSN
           value: "{{ index .Values "api" "sentry-dsn" }}"
         - name: TOKEN_AUTH_BUILDER_TOKEN
-          value: "{{ index .Values "global" "keys" "token-auth-builder-token" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-builder-token"
         - name: TOKEN_AUTH_CERT_ISSUER
           value: "api.{{ .Values.global.hostname }}"
         - name: TOKEN_AUTH_CERT_KEY
-          value: "{{ index .Values "global" "keys" "token-auth-key" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-key"
         - name: TOKEN_AUTH_CERT_KID
-          value: "{{ index .Values "global" "keys" "token-auth-kid" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-kid"
         - name: TOKEN_AUTH_CERT_PUB
-          value: "{{ index .Values "global" "keys" "token-auth-pub" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-token-auth"
+              key: "token-auth-pub"
         - name: TOKEN_AUTH_JWT_ALGO
           value: "ES256"
         - name: VPN_HOST
@@ -125,16 +214,37 @@ spec:
         - name: VPN_PORT
           value: "443"
         - name: VPN_SERVICE_API_KEY
-          value: "{{ index .Values "global" "keys" "service-api-key" }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-open-balena-secrets
+              key: "service-api-key"
         - name: SUPERUSER_EMAIL
           value: "{{ index .Values "global" "email" }}"
         - name: SUPERUSER_PASSWORD
           value: "{{ index .Values "global" "password" }}"
+        {{- if (index .Values "api" "contractsPrivateRepo" "mountInsteadOfClone" ) }}
+        - name: CONTRACTS_PRIVATE_REPO_OWNER
+          value: "{{ $contractsPrivateRepoOwner }}"
+        - name: CONTRACTS_PRIVATE_REPO_NAME
+          value: "{{ $contractsPrivateRepoName }}"
+        - name: CONTRACTS_PRIVATE_REPO_TOKEN
+          value: "{{ $contractsPrivateRepoToken }}"
+        {{- else }}
+        - name: CONTRACTS_PRIVATE_REPO_OWNER
+          value: "{{ index .Values "api" "contractsPrivateRepo" "owner" }}"
+        - name: CONTRACTS_PRIVATE_REPO_NAME
+          value: "{{ index .Values "api" "contractsPrivateRepo" "name" }}"
+        - name: CONTRACTS_PRIVATE_REPO_TOKEN
+          value: "{{ index .Values "api" "contractsPrivateRepo" "token" }}"
+        {{- end }}
         volumeMounts:
         - mountPath: /run
           name: run
         - mountPath: /sys/fs/cgroup
           name: cgroup
+        # Mount the contracts private repo as a volume using the `owner-name` specified by the values file.
+        - mountPath: "/tmp/contracts/{{- $contractsFolderInApi }}"
+          name: private-contracts-repo
       volumes:
       - name: run
         emptyDir:
@@ -142,7 +252,9 @@ spec:
       - name: cgroup
         emptyDir:
           medium: Memory
-
+      - name: private-contracts-repo
+        emptyDir:
+          medium: Memory
       {{- with .Values.api.nodeSelector  }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

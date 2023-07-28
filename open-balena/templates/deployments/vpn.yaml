@@ -1,3 +1,37 @@
+# Roles, ServiceAccount and RoleBinding for the VPN to be able to update the secret 
+# that holds the double encoded VPN certificates.
+# See the initContainer below for more details.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openbalena.fullname" . }}-secret-updater
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get","list","watch","update","create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openbalena.fullname" . }}-secret-updater-binding
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openbalena.fullname" . }}-read-update-secrets
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "openbalena.fullname" . }}-secret-updater
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openbalena.fullname" . }}-read-update-secrets
+  namespace: {{ .Release.Namespace }}
+
+---
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,6 +74,56 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      # The VPN needs to be able to update the secret that holds the double encoded VPN certificates.
+      # This way we make sure the secret for the VPN is always up to date with the latest certificates.
+      # Double encoding is necessary because the VPN container reads the certificates from an env 
+      # and base64 decodes them. Mounting the env from a secret already does one base64 decoding, so we need to double encode.
+      serviceAccountName: {{ include "openbalena.fullname" . }}-read-update-secrets
+      initContainers:
+      - name: republish-secrets-as-double-secrets
+        image: registry.gitlab.com/aivero/open-source/contrib/alpine-curl-jq-openssl-nodejs-inotifytools/linux-x86_64:latest
+        env:
+        {{- if not (index .Values "global" "certificates" "root" "ca") }}
+        - name: VPN_CERTIFICATE_CA
+          valueFrom: 
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-vpn-cert
+              key: "ca.crt"
+        {{- end }}
+        {{- if (not (index .Values "global" "certificates" "vpn" "crt")) }}
+        - name: VPN_CERTIFICATE_CRT
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-vpn-cert
+              key: "tls.crt"
+        {{- end }}
+        {{- if not (index .Values "global" "certificates" "vpn" "server-key") }}
+        - name: VPN_CERTIFICATE_KEY
+          valueFrom: 
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-vpn-cert
+              key: "tls.key"
+        {{- end }}
+        command:
+          - sh
+          - -c
+          - |
+            set -e
+            echo "Double encoding dhparam.pem"
+            NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+            VPN_CERTIFICATE_CA_DOUBLE64=$( echo "$VPN_CERTIFICATE_CA" | base64 | tr -d '\n' | base64 | tr -d '\n')
+            VPN_CERTIFICATE_CRT_DOUBLE64=$( echo "$VPN_CERTIFICATE_CRT" | base64 | tr -d '\n' | base64 | tr -d '\n')
+            VPN_CERTIFICATE_KEY_DOUBLE64=$( echo "$VPN_CERTIFICATE_KEY" | base64 | tr -d '\n' | base64 | tr -d '\n')
+            echo  'apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ include "openbalena.fullname" . }}-vpn-cert-double64
+            data:
+              ca.crt: '"$VPN_CERTIFICATE_CA_DOUBLE64"'
+              tls.crt: '"$VPN_CERTIFICATE_CRT_DOUBLE64"'
+              tls.key: '"$VPN_CERTIFICATE_KEY_DOUBLE64" > request.yml
+            curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -X POST -H "Content-Type: application/yaml" -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" --data-binary "$(cat request.yml)" "https://kubernetes.default.svc/api/v1/namespaces/$NAMESPACE/secrets"
+            exit
       containers:
       - name: {{ .Chart.Name }}-api
         image: {{ .Values.vpn.image.repository }}:{{ .Values.vpn.image.tag }}
@@ -60,12 +144,25 @@ spec:
         env:
         - name: CONFD_BACKEND
           value: "ENV"
+        # Generated in the `balena-generate-keys-job.yml` job.
         - name: API_SERVICE_API_KEY
-          value: "{{ index .Values "global" "keys" "api-vpn-service-api-key" }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "openbalena.fullname" . }}-open-balena-secrets
+              key: "api-vpn-service-api-key"
         - name: API_HOST
           value: "api.{{ .Values.global.hostname }}"
+       {{- if .Values.global.certificates.root.ca }}
         - name: ROOT_CA
           value: "{{ index .Values "global" "certificates" "root" "ca" }}"
+       {{- else }}
+      #  Use the secret that the API service double encrypted
+        - name: ROOT_CA
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-api-cert-double64"
+              key: "ca.crt"
+        {{- end }} 
         - name: VPN_PORT
           value: "443"
         - name: PRODUCTION_MODE
@@ -76,16 +173,56 @@ spec:
           value: "{{ index .Values "vpn" "sentry-dsn" }}"
         - name: VPN_HAPROXY_USEPROXYPROTOCOL
           value: "false"
+        # Only set VPN Certificates as env from the config if they exist, else get them from the secret we waited for in the initContainer 
+        {{- if (index .Values "global" "certificates" "vpn" "ca") }}
         - name: VPN_OPENVPN_CA_CRT
           value: "{{ index .Values "global" "certificates" "vpn" "ca" }}"
+        {{- else }}
+        - name: VPN_OPENVPN_CA_CRT
+          valueFrom: 
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-vpn-cert-double64"
+              key: "ca.crt"
+        {{- end }}
+        {{- if (index .Values "global" "certificates" "vpn" "crt") }}
         - name: VPN_OPENVPN_SERVER_CRT
           value: "{{ index .Values "global" "certificates" "vpn" "crt" }}"
-        - name: VPN_OPENVPN_SERVER_DH
-          value: "{{ index .Values "global" "certificates" "vpn" "dh" }}"
+        {{- else }}
+        - name: VPN_OPENVPN_SERVER_CRT
+          valueFrom: 
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-vpn-cert-double64"
+              key: "tls.crt"
+        {{- end }}
+        {{- if (index .Values.global.certificates.vpn "server-key") }}
         - name: VPN_OPENVPN_SERVER_KEY
           value: "{{ index .Values "global" "certificates" "vpn" "server-key" }}"
+        {{- else }}
+        - name: VPN_OPENVPN_SERVER_KEY
+          valueFrom: 
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-vpn-cert-double64"
+              key: "tls.key"
+        {{- end }}
+        # only set DH params as env from the config if they exist.
+        # Else we will read them from the secret created in the initContainer
+        {{- if (index .Values "global" "certificates" "vpn" "dh") }}
+        - name: VPN_OPENVPN_SERVER_DH
+          value: "{{ index .Values "global" "certificates" "vpn" "dh" }}"
+        {{- else }}
+        - name: VPN_OPENVPN_SERVER_DH
+          valueFrom: 
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-dh-params-double64"
+              key: "dhparam.pem"
+        {{- end }}
         - name: VPN_SERVICE_API_KEY
-          value: "{{ index .Values "global" "keys" "service-api-key" }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ include "openbalena.fullname" . }}-open-balena-secrets"
+              key: "service-api-key"
+        - name: VPN_VERBOSE_LOGS
+          value: "true"
 
         # Use the 'eth0' interface, so the VPN will register itself via the Cluster IP of the pod
         - name: VPN_SERVICE_REGISTER_INTERFACE
