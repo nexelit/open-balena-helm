@@ -15,7 +15,7 @@ maintainers:
 
 dependencies:
 - name: haproxy-ingress
-  version: 0.14.2
+  version: 0.14.6
   alias: haproxy
   repository: "https://haproxy-ingress.github.io/charts"
 
