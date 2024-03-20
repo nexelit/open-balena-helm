@@ -76,6 +76,8 @@ spec:
           value: "{{ index .Values "global" "certificates" "vpn" "ca-chain" }}"
         - name: DEVICE_CONFIG_SSH_AUTHORIZED_KEYS
           value: "{{ index .Values "global" "ssh-authorized-keys" }}"
+        - name: API_HOST
+          value: "api.{{ .Values.global.hostname }}"
         - name: HOST
           value: "api.{{ .Values.global.hostname }}"
         - name: IMAGE_MAKER_URL
@@ -108,6 +110,8 @@ spec:
           value: "registry.{{ .Values.global.hostname }}"
         - name: SENTRY_DSN
           value: "{{ index .Values "api" "sentry-dsn" }}"
+        - name: TRUST_PROXY
+          value: "true"
         - name: TOKEN_AUTH_BUILDER_TOKEN
           value: "{{ index .Values "global" "keys" "token-auth-builder-token" }}"
         - name: TOKEN_AUTH_CERT_ISSUER

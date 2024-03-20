@@ -107,7 +107,7 @@ api:
   replicas: 1
   image:
     repository: balena/open-balena-api
-    tag: "v0.209.2"
+    tag: "v19.1.19"
     pullPolicy: IfNotPresent
 
   labels: {}
@@ -128,7 +128,7 @@ vpn:
   replicas: 1
   image:
     repository: balena/open-balena-vpn
-    tag: "v11.4.6"
+    tag: "v11.29.36"
     pullPolicy: IfNotPresent
 
   labels: {}
@@ -149,7 +149,7 @@ registry:
   replicas: 1
   image:
     repository: balena/open-balena-registry
-    tag: "v2.25.3"
+    tag: "v2.39.45"
     pullPolicy: IfNotPresent
 
   disableRedirect: false
@@ -174,7 +174,7 @@ s3:
   replicas: 1
   image:
     repository: balena/open-balena-s3
-    tag: "v2.13.10"
+    tag: "v2.28.32"
     pullPolicy: IfNotPresent
 
   labels: {}
@@ -196,7 +196,7 @@ db:
   replicas: 1
   image:
     repository: balena/open-balena-db
-    tag: "v5.1.2"
+    tag: "v5.2.2"
     pullPolicy: IfNotPresent
 
   labels: {}
@@ -234,7 +234,7 @@ redis:
   replicas: 1
   image:
     repository: redis
-    tag: "alpine"
+    tag: "7.2.4-alpine3.19"
     pullPolicy: IfNotPresent
 
   labels: {}
